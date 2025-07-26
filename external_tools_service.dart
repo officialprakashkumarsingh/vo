@@ -135,6 +135,17 @@ class ExternalToolsService extends ChangeNotifier {
       },
       execute: _screenshotVision,
     );
+
+    // Mermaid chart generation - create diagrams using mermaid.js via the Kroki service
+    _tools['mermaid_chart'] = ExternalTool(
+      name: 'mermaid_chart',
+      description: 'Generates charts and diagrams using mermaid.js and returns a preview image. Useful for simple flow charts, sequence diagrams, and more.',
+      parameters: {
+        'diagram': {'type': 'string', 'description': 'Mermaid diagram code', 'required': true},
+        'format': {'type': 'string', 'description': 'Image format (svg or png)', 'default': 'svg'},
+      },
+      execute: _generateMermaidChart,
+    );
   }
 
   /// Execute a single tool by name with given parameters
@@ -785,6 +796,31 @@ class ExternalToolsService extends ChangeNotifier {
           }
         } catch (e) {
           debugPrint('DuckDuckGo search error: $e');
+          // Fallback to DuckDuckGo lite HTML parsing
+          try {
+            final liteUrl = 'https://lite.duckduckgo.com/50x.html?kd=-1&kp=1&q=${Uri.encodeComponent(query)}';
+            final liteResp = await http.get(Uri.parse(liteUrl)).timeout(const Duration(seconds: 15));
+            if (liteResp.statusCode == 200) {
+              final html = liteResp.body;
+              final itemRegex = RegExp(r'<a rel="nofollow" class="result-link" href="([^"]*)">(.*?)<\/a>', dotAll: true);
+              final matches = itemRegex.allMatches(html).take(limit);
+              for (final m in matches) {
+                final url = Uri.decodeFull(m.group(1) ?? '');
+                final title = m.group(2)?.replaceAll(RegExp(r'<[^>]*>'), '') ?? '';
+                if (title.isNotEmpty && url.isNotEmpty) {
+                  allResults.add({
+                    'title': title,
+                    'snippet': '',
+                    'url': url,
+                    'source': 'DuckDuckGo Lite',
+                    'type': 'result',
+                  });
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('DuckDuckGo fallback error: $e');
+          }
         }
       }
 
@@ -961,6 +997,36 @@ class ExternalToolsService extends ChangeNotifier {
         }
       }
 
+      // 2b. Search books and documents via Open Library API
+      if (type == 'all' || type == 'research') {
+        try {
+          final olQuery = Uri.encodeComponent(query);
+          final olUrl = 'https://openlibrary.org/search.json?title=$olQuery&limit=$limit';
+          final olResponse = await http.get(Uri.parse(olUrl)).timeout(const Duration(seconds: 15));
+
+          if (olResponse.statusCode == 200) {
+            final data = json.decode(olResponse.body);
+            final docs = data['docs'] as List? ?? [];
+            for (final doc in docs.take(limit)) {
+              final title = doc['title']?.toString() ?? '';
+              final id = doc['key']?.toString() ?? '';
+              if (title.isNotEmpty && id.isNotEmpty) {
+                final url = 'https://openlibrary.org$id';
+                allResults.add({
+                  'title': title,
+                  'snippet': doc['author_name'] != null ? 'Author: ${(doc['author_name'] as List).join(', ')}' : 'Open Library result',
+                  'url': url,
+                  'source': 'Open Library',
+                  'type': 'educational',
+                });
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Open Library search error: $e');
+        }
+      }
+
       // 3. Search educational resources through Wikipedia for documentation
       if (type == 'all' || type == 'research') {
         try {
@@ -1025,7 +1091,7 @@ class ExternalToolsService extends ChangeNotifier {
           'documents': uniqueResults.where((r) => r['type'] == 'document').length,
           'educational': uniqueResults.where((r) => r['type'] == 'educational').length,
         },
-        'sources_searched': ['arXiv', 'DuckDuckGo', 'Wikipedia'],
+        'sources_searched': ['arXiv', 'DuckDuckGo', 'Wikipedia', 'Open Library'],
       };
     } catch (e) {
       return {
@@ -1066,7 +1132,7 @@ class ExternalToolsService extends ChangeNotifier {
         // It's a regular URL, verify it's accessible
         try {
           final headResponse = await http.head(Uri.parse(imageUrl)).timeout(Duration(seconds: 10));
-          isValidUrl = headResponse.statusCode == 200;
+          isValidUrl = headResponse.statusCode >= 200 && headResponse.statusCode < 400;
           processedImageUrl = imageUrl;
         } catch (e) {
           // If head request fails, still try to use the URL - it might work with the vision API
@@ -1103,7 +1169,10 @@ class ExternalToolsService extends ChangeNotifier {
               'role': 'user', 
               'content': [
                 {'type': 'text', 'text': question},
-                {'type': 'image_url', 'image_url': {'url': processedImageUrl}},
+                {
+                  'type': 'image_url',
+                  'image_url': {'url': processedImageUrl, 'detail': 'auto'}
+                },
               ]
             },
           ],
@@ -1168,6 +1237,56 @@ class ExternalToolsService extends ChangeNotifier {
         'image_url': imageUrl,
         'tool_executed': true,
         'troubleshooting': 'Check if the image URL is accessible and the vision model supports the image format.',
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> _generateMermaidChart(Map<String, dynamic> params) async {
+    final diagram = params['diagram'] as String? ?? '';
+    final format = params['format'] as String? ?? 'svg';
+
+    if (diagram.isEmpty) {
+      return {
+        'success': false,
+        'error': 'diagram parameter is required',
+        'tool_executed': false,
+      };
+    }
+
+    try {
+      final url = 'https://kroki.io/mermaid/$format';
+      final response = await http
+          .post(Uri.parse(url), headers: {'Content-Type': 'text/plain'}, body: diagram)
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final bytes = response.bodyBytes;
+        final mime = format == 'png' ? 'image/png' : 'image/svg+xml';
+        final base64Data = base64Encode(bytes);
+        final dataUrl = 'data:$mime;base64,$base64Data';
+
+        return {
+          'success': true,
+          'format': format,
+          'diagram': diagram,
+          'image_url': dataUrl,
+          'size': bytes.length,
+          'tool_executed': true,
+          'execution_time': DateTime.now().toIso8601String(),
+          'description': 'Mermaid diagram generated successfully',
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Failed to generate chart: HTTP ${response.statusCode}',
+          'tool_executed': true,
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'error': 'Chart generation error: $e',
+        'tool_executed': true,
       };
     }
   }
