@@ -278,6 +278,7 @@ For parallel tool execution (when multiple tools are needed), use this array for
 - **web_search**: Get real-time information from DuckDuckGo and Wikipedia (enhanced with deep search)
 - **document_search**: Find PDF documents, academic papers, research content
 - **screenshot_vision**: Analyze screenshots you've captured to understand content
+- **mermaid_chart**: Generate diagrams and charts using mermaid.js
 - **fetch_ai_models**: List available AI chat models
 - **switch_ai_model**: Change to different AI model
 
@@ -535,9 +536,7 @@ $screenshotLinks
 **Dimensions:** ${result['width']}x${result['height']}
 **Image Size:** ${(result['image_size'] as int? ?? 0) ~/ 1024}KB
 
-<div style="border-radius: 12px; overflow: hidden; display: inline-block;">
-<img src="${result['image_url']}" alt="Generated Image" style="border-radius: 12px; max-width: 100%; height: auto;" />
-</div>
+![Generated Image](${result['image_url']})
 
 ✅ Image generated successfully using ${result['model']} model!''';
 
@@ -596,7 +595,16 @@ $resultsList
 **Model:** ${result['model']}
 **Analysis:** ${result['answer']}
 
-✅ Screenshot analyzed successfully using vision AI!''';
+          ✅ Screenshot analyzed successfully using vision AI!''';
+
+        case 'mermaid_chart':
+          return '''**📊 Mermaid Chart Generated**
+
+**Format:** ${result['format']}
+
+![Diagram](${result['image_url']})
+
+✅ Diagram generated successfully!''';
 
         case 'document_search':
           final results = result['results'] as List;
