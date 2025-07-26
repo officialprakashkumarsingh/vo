@@ -272,10 +272,11 @@ For parallel tool execution (when multiple tools are needed), use this array for
 ```
 
 🎯 WHEN TO USE TOOLS:
-- **screenshot**: Capture webpages, see websites visually
+- **screenshot**: Capture webpages, see websites visually (always provide url parameter)
 - **generate_image**: Create images, art, visual content (models: flux, turbo)
 - **fetch_image_models**: Show available image generation models
-- **web_search**: Get real-time information from DuckDuckGo and Wikipedia
+- **web_search**: Get real-time information from DuckDuckGo and Wikipedia (enhanced with deep search)
+- **document_search**: Find PDF documents, academic papers, research content
 - **screenshot_vision**: Analyze screenshots you've captured to understand content
 - **fetch_ai_models**: List available AI chat models
 - **switch_ai_model**: Change to different AI model
@@ -283,7 +284,8 @@ For parallel tool execution (when multiple tools are needed), use this array for
 🔗 PARALLEL EXECUTION:
 You can now use multiple tools simultaneously! For example:
 - Take screenshot + analyze it with vision
-- Search web + generate related image
+- Search web + search documents for comprehensive research
+- Generate image + search for related information
 - Fetch models + take screenshot
 
 Always use proper JSON format and explain what you're doing to help the user understand the process.
@@ -349,22 +351,48 @@ Be conversational and helpful!'''
         // Update memory with the completed conversation
         _updateConversationMemory(prompt, processedMessage['text']);
 
+        // Ensure UI scrolls to bottom after processing
+        _scrollToBottom();
+
       } else {
+        // Handle different status codes more gracefully
+        String errorMessage;
+        if (response.statusCode == 400) {
+          errorMessage = 'Bad request. Please check your message format and try again.';
+        } else if (response.statusCode == 401) {
+          errorMessage = 'Authentication failed. Please check API credentials.';
+        } else if (response.statusCode == 429) {
+          errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+        } else if (response.statusCode >= 500) {
+          errorMessage = 'Server error. Please try again in a moment.';
+        } else {
+          errorMessage = 'Sorry, there was an error processing your request. Status: ${response.statusCode}';
+        }
+        
         setState(() {
-          _messages.add(Message.bot('Sorry, there was an error processing your request. Status: ${response.statusCode}'));
+          _messages.add(Message.bot(errorMessage));
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _messages.add(Message.bot('Sorry, I\'m having trouble connecting right now. Please try again.'));
+          _messages.add(Message.bot('Sorry, I\'m having trouble connecting right now. Please try again. Error: ${e.toString().length > 100 ? e.toString().substring(0, 100) + '...' : e.toString()}'));
         });
       }
     } finally {
+      // Clean up resources
       _httpClient?.close();
       _httpClient = null;
       if (mounted) {
-        setState(() => _awaitingReply = false);
+        setState(() {
+          _awaitingReply = false;
+        });
+        // Clear uploaded image only after successful processing
+        if (_uploadedImageBase64 != null) {
+          Future.delayed(Duration(milliseconds: 500), () {
+            if (mounted) _clearUploadedImage();
+          });
+        }
       }
     }
   }
@@ -507,7 +535,9 @@ $screenshotLinks
 **Dimensions:** ${result['width']}x${result['height']}
 **Image Size:** ${(result['image_size'] as int? ?? 0) ~/ 1024}KB
 
-![Generated Image](${result['image_url']})
+<div style="border-radius: 12px; overflow: hidden; display: inline-block;">
+<img src="${result['image_url']}" alt="Generated Image" style="border-radius: 12px; max-width: 100%; height: auto;" />
+</div>
 
 ✅ Image generated successfully using ${result['model']} model!''';
 
@@ -525,23 +555,39 @@ $screenshotLinks
         case 'web_search':
           final results = result['results'] as List;
           String resultsList = '';
-          for (int i = 0; i < results.length && i < 3; i++) {
+          for (int i = 0; i < results.length && i < 5; i++) {
             final res = results[i] as Map<String, dynamic>;
-            resultsList += '${i + 1}. **${res['title']}** (${res['source']})\n';
+            final source = res['source']?.toString() ?? '';
+            final type = res['type']?.toString() ?? '';
+            String icon = '🔍';
+            if (source.contains('Wikipedia')) icon = '📖';
+            else if (type == 'definition') icon = '📚';
+            else if (type == 'primary') icon = '⭐';
+            
+            resultsList += '$icon **${res['title']}** ($source)\n';
             resultsList += '   ${res['snippet']}\n';
             if (res['url']?.toString().isNotEmpty == true) {
               resultsList += '   🔗 [Read more](${res['url']})\n';
             }
             resultsList += '\n';
           }
-          return '''**🔍 Web Search Completed Successfully**
+          
+          final searchDetails = result['search_details'] as Map<String, dynamic>? ?? {};
+          return '''**🔍 Enhanced Web Search Completed Successfully**
 
 **Query:** ${result['query']}
 **Source:** ${result['source']}
-**Results Found:** ${result['total_found']}
+**Deep Search:** ${result['deep_search'] == true ? 'Enabled' : 'Disabled'}
 
-**Top Results:**
-$resultsList✅ Web search completed successfully!''';
+**Search Results:**
+$resultsList
+
+**Result Distribution:**
+- Wikipedia: ${searchDetails['wikipedia_results'] ?? 0} results
+- DuckDuckGo: ${searchDetails['duckduckgo_results'] ?? 0} results
+- Total Found: ${result['total_found']}
+
+✅ Enhanced web search completed successfully!''';
 
         case 'screenshot_vision':
           return '''**👁️ Screenshot Vision Analysis Completed**
@@ -551,6 +597,43 @@ $resultsList✅ Web search completed successfully!''';
 **Analysis:** ${result['answer']}
 
 ✅ Screenshot analyzed successfully using vision AI!''';
+
+        case 'document_search':
+          final results = result['results'] as List;
+          String resultsList = '';
+          for (int i = 0; i < results.length && i < 3; i++) {
+            final res = results[i] as Map<String, dynamic>;
+            final source = res['source']?.toString() ?? '';
+            final type = res['type']?.toString() ?? '';
+            String icon = '📄';
+            if (type == 'academic_paper') icon = '🎓';
+            else if (type == 'document') icon = '📋';
+            else if (type == 'educational') icon = '📚';
+            
+            resultsList += '$icon **${res['title']}** ($source)\n';
+            resultsList += '   ${res['snippet']}\n';
+            if (res['url']?.toString().isNotEmpty == true) {
+              resultsList += '   🔗 [Access Document](${res['url']})\n';
+            }
+            resultsList += '\n';
+          }
+          
+          final searchDetails = result['search_details'] as Map<String, dynamic>? ?? {};
+          return '''**📚 Document Search Completed Successfully**
+
+**Query:** ${result['query']}
+**Type:** ${result['type']}
+**Sources:** ${(result['sources_searched'] as List? ?? []).join(', ')}
+
+**Found Documents:**
+$resultsList
+
+**Search Summary:**
+- Academic Papers: ${searchDetails['academic_papers'] ?? 0}
+- Documents: ${searchDetails['documents'] ?? 0}
+- Educational Content: ${searchDetails['educational'] ?? 0}
+
+✅ Document search completed with ${result['total_found']} results!''';
 
         default:
           return '''**🛠️ Tool Executed: $toolName**
@@ -637,11 +720,6 @@ Error: ${result['error']}''';
     _scrollToBottom();
     HapticFeedback.lightImpact();
     await _generateResponse(messageText);
-    
-    // Clear uploaded image after sending
-    if (_uploadedImageBase64 != null) {
-      _clearUploadedImage();
-    }
   }
 
   void _toggleWebSearch() {
