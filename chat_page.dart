@@ -483,12 +483,17 @@ Be conversational and helpful!'''
         case 'screenshot':
           // Handle multiple screenshots if they exist
           if (result.containsKey('screenshots') && result['screenshots'] is List) {
+            final screenshots = result['screenshots'] as List;
+            String screenshotImages = '';
+            for (int i = 0; i < screenshots.length; i++) {
+              final shot = screenshots[i] as Map;
+              screenshotImages += '![Screenshot ${i + 1}](${shot['preview_url']})\n\n';
+            }
             return '''**🖼️ Multiple Screenshots Captured Successfully**
 
-**Total Screenshots:** ${result['total_screenshots']}
-**Service:** ${result['service']}
+$screenshotImages**Service:** ${result['service']}
 
-✅ All screenshots are displayed in the tools panel.''';
+✅ All screenshots captured and available for viewing!''';
           } else {
             return '''**🖼️ Screenshot Tool Executed Successfully**
 
@@ -496,7 +501,9 @@ Be conversational and helpful!'''
 **Dimensions:** ${result['width']}x${result['height']}
 **Service:** ${result['service']}
 
-✅ Screenshot captured successfully and shown in the tools panel.''';
+![Screenshot](${result['preview_url']})
+
+✅ Screenshot captured and available for viewing!''';
           }
 
         case 'fetch_ai_models':
@@ -527,6 +534,8 @@ Be conversational and helpful!'''
 **Model:** ${result['model']}
 **Dimensions:** ${result['width']}x${result['height']}
 **Image Size:** ${(result['image_size'] as int? ?? 0) ~/ 1024}KB
+
+![Generated Image](${result['image_url']})
 
 ✅ Image generated successfully using ${result['model']} model!''';
 
@@ -1115,6 +1124,109 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
     _toggleActions();
   }
 
+  List<Widget> _buildAttachments() {
+    final List<Widget> widgets = [];
+    final data = widget.message.toolData;
+    for (final entry in data.entries) {
+      final tool = entry.key;
+      final result = entry.value;
+      if (result is Map && result['success'] == true) {
+        if (tool == 'generate_image' && result['image_url'] != null) {
+          widgets.add(Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: _buildImageWidget(result['image_url']),
+            ),
+          ));
+        } else if (tool == 'mermaid_chart' && result['image_url'] != null) {
+          widgets.add(Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: _buildImageWidget(result['image_url']),
+            ),
+          ));
+        } else if (tool == 'screenshot') {
+          if (result['screenshots'] is List) {
+            for (final shot in result['screenshots']) {
+              if (shot is Map && shot['preview_url'] != null) {
+                widgets.add(Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: _buildImageWidget(shot['preview_url']),
+                  ),
+                ));
+              }
+            }
+          } else if (result['preview_url'] != null) {
+            widgets.add(Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: _buildImageWidget(result['preview_url']),
+              ),
+            ));
+          }
+        }
+      }
+    }
+    return widgets;
+  }
+
+  Widget _buildImageWidget(String url) {
+    try {
+      if (url.startsWith('data:image')) {
+        final commaIndex = url.indexOf(',');
+        final header = url.substring(5, commaIndex);
+        final mime = header.split(';').first;
+        final base64Data = url.substring(commaIndex + 1);
+        final bytes = base64Decode(base64Data);
+        if (mime == 'image/svg+xml') {
+          return SvgPicture.memory(
+            bytes,
+            height: 200,
+            width: double.infinity,
+            fit: BoxFit.contain,
+          );
+        }
+        return Image.memory(
+          bytes,
+          height: 200,
+          width: double.infinity,
+          fit: BoxFit.cover,
+        );
+      } else {
+        if (url.toLowerCase().endsWith('.svg')) {
+          return SvgPicture.network(
+            url,
+            height: 200,
+            width: double.infinity,
+            fit: BoxFit.contain,
+            placeholderBuilder: (context) => Container(
+              height: 200,
+              alignment: Alignment.center,
+              child: const CircularProgressIndicator(),
+            ),
+          );
+        }
+        return Image.network(
+          url,
+          height: 200,
+          width: double.infinity,
+          fit: BoxFit.cover,
+        );
+      }
+    } catch (_) {
+      return Container(
+        height: 200,
+        alignment: Alignment.center,
+        child: const Icon(Icons.image_not_supported, color: Colors.grey),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isBot = widget.message.sender == Sender.bot;
@@ -1179,6 +1291,10 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
             _ThoughtsPanel(thoughts: widget.message.thoughts),
           if (isBot && widget.message.codes.isNotEmpty)
             _CodePanel(codes: widget.message.codes),
+          if (isBot) ...(() {
+            final attachments = _buildAttachments();
+            return attachments.isNotEmpty ? attachments : <Widget>[];
+          })(),
           // Tool results panel for bot messages
           if (isBot && widget.message.toolData.isNotEmpty)
             _ToolResultsPanel(toolData: widget.message.toolData),
@@ -2218,86 +2334,6 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Screenshot preview(s)
-                              if (toolName == 'screenshot' && result['success'] == true)
-                                ...(() {
-                                  List<Widget> shots = [];
-                                  if (result.containsKey('screenshots') && result['screenshots'] is List) {
-                                    final shotsList = result['screenshots'] as List;
-                                    for (int i = 0; i < shotsList.length; i++) {
-                                      final shot = shotsList[i] as Map;
-                                      shots.add(Container(
-                                        margin: const EdgeInsets.only(bottom: 8),
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(8),
-                                          border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
-                                        ),
-                                        child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(8),
-                                          child: _buildImageWidget(
-                                            shot['preview_url'],
-                                            onError: () => Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-                                                const SizedBox(height: 8),
-                                                Text(
-                                                  'Screenshot generating...\nTap to view directly',
-                                                  textAlign: TextAlign.center,
-                                                  style: TextStyle(color: Colors.grey),
-                                                ),
-                                                const SizedBox(height: 8),
-                                                ElevatedButton(
-                                                  onPressed: () => _launchUrl(shot['preview_url']),
-                                                  child: const Text('View Screenshot'),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ));
-                                    }
-                                  } else if (result['preview_url'] != null) {
-                                    shots.add(Container(
-                                      margin: const EdgeInsets.only(bottom: 8),
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: _buildImageWidget(
-                                          result['preview_url'],
-                                          onError: () => Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                'Screenshot generating...\nTap to view directly',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(color: Colors.grey),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              ElevatedButton(
-                                                onPressed: () => _launchUrl(result['preview_url']),
-                                                child: const Text('View Screenshot'),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ));
-                                  }
-                                  if (result['total_screenshots'] != null) {
-                                    shots.add(Padding(
-                                      padding: const EdgeInsets.only(bottom: 8),
-                                      child: Text('Total Screenshots: ${result['total_screenshots']}',
-                                          style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF000000))),
-                                    ));
-                                  }
-                                  return shots;
-                                })(),
                               
                               // Result details
                               if ((result['url'] != null) ||
@@ -2328,31 +2364,6 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
                                   ),
                                 ),
 
-                              if (toolName == 'generate_image' && result['success'] == true && result['image_url'] != null)
-                                Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: _buildImageWidget(result['image_url']),
-                                  ),
-                                ),
-
-                              if (toolName == 'mermaid_chart' && result['success'] == true && result['image_url'] != null)
-                                Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: _buildImageWidget(result['image_url']),
-                                  ),
-                                ),
                             ],
                           ),
                         ),
@@ -2400,91 +2411,6 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
     );
   }
   
-  void _launchUrl(String url) {
-    // This would typically use url_launcher package
-    // For now, just copy to clipboard
-    Clipboard.setData(ClipboardData(text: url));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Screenshot URL copied to clipboard'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  Widget _buildImageWidget(String url, {Widget Function()? onError}) {
-    try {
-      if (url.startsWith('data:image')) {
-        final commaIndex = url.indexOf(',');
-        final header = url.substring(5, commaIndex); // image/png;base64
-        final mime = header.split(';').first;
-        final base64Data = url.substring(commaIndex + 1);
-        final bytes = base64Decode(base64Data);
-        if (mime == 'image/svg+xml') {
-          return SvgPicture.memory(
-            bytes,
-            height: 200,
-            width: double.infinity,
-            fit: BoxFit.contain,
-          );
-        }
-        return Image.memory(
-          bytes,
-          height: 200,
-          width: double.infinity,
-          fit: BoxFit.cover,
-        );
-      } else {
-        if (url.toLowerCase().endsWith('.svg')) {
-          return SvgPicture.network(
-            url,
-            height: 200,
-            width: double.infinity,
-            fit: BoxFit.contain,
-            placeholderBuilder: (context) => Container(
-              height: 200,
-              alignment: Alignment.center,
-              child: const CircularProgressIndicator(),
-            ),
-          );
-        }
-        return Image.network(
-          url,
-          height: 200,
-          width: double.infinity,
-          fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Container(
-              height: 200,
-              alignment: Alignment.center,
-              child: CircularProgressIndicator(
-                value: loadingProgress.expectedTotalBytes != null
-                    ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
-                    : null,
-              ),
-            );
-          },
-          errorBuilder: (context, error, stackTrace) {
-            return Container(
-              height: 200,
-              alignment: Alignment.center,
-              child: onError?.call() ??
-                  Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-            );
-          },
-        );
-      }
-    } catch (_) {
-      return Container(
-        height: 200,
-        alignment: Alignment.center,
-        child: onError?.call() ??
-            Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-      );
-    }
-  }
 }
 
 /* ----------------------------------------------------------

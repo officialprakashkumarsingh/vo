@@ -1043,11 +1043,7 @@ class ExternalToolsService extends ChangeNotifier {
     String diagram = params['diagram'] as String? ?? '';
     final format = params['format'] as String? ?? 'svg';
 
-    // Ensure diagram uses a dark theme with white text so it renders clearly
-    final themeSnippet = "%%{init: {'theme': 'dark'}}%%\n";
-    if (!diagram.trim().startsWith('%%{')) {
-      diagram = themeSnippet + diagram;
-    }
+    diagram = diagram.trim();
 
     if (diagram.isEmpty) {
       return {
@@ -1058,9 +1054,13 @@ class ExternalToolsService extends ChangeNotifier {
     }
 
     try {
-      final url = 'https://kroki.io/mermaid/$format';
+      final url = 'https://kroki.io/mermaid/$format?theme=dark';
       final response = await http
-          .post(Uri.parse(url), headers: {'Content-Type': 'text/plain'}, body: diagram)
+          .post(
+            Uri.parse(url),
+            headers: {'Content-Type': 'text/plain; charset=utf-8'},
+            body: diagram,
+          )
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
