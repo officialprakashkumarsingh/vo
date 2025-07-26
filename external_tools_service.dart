@@ -99,16 +99,29 @@ class ExternalToolsService extends ChangeNotifier {
       execute: _fetchImageModels,
     );
 
-    // Web search tool - searches the web using DuckDuckGo and Wikipedia
+    // Enhanced web search tool - searches the web using DuckDuckGo and Wikipedia
     _tools['web_search'] = ExternalTool(
       name: 'web_search',
-      description: 'Performs real-time web search using DuckDuckGo and Wikipedia. The AI can use this tool to find current information, news, or any web content.',
+      description: 'Performs real-time web search using DuckDuckGo and Wikipedia with improved coverage. The AI can use this tool to find current information, news, or any web content.',
       parameters: {
         'query': {'type': 'string', 'description': 'The search query', 'required': true},
         'source': {'type': 'string', 'description': 'Search source (duckduckgo, wikipedia, both)', 'default': 'both'},
-        'limit': {'type': 'integer', 'description': 'Maximum number of results (default: 5)', 'default': 5},
+        'limit': {'type': 'integer', 'description': 'Maximum number of results (default: 8)', 'default': 8},
+        'deep_search': {'type': 'boolean', 'description': 'Enable deeper Wikipedia search (default: true)', 'default': true},
       },
       execute: _webSearch,
+    );
+
+    // Document search tool - searches for PDF documents and academic papers
+    _tools['document_search'] = ExternalTool(
+      name: 'document_search',
+      description: 'Searches for PDF documents, academic papers, and research content from public sources. The AI can use this tool to find educational content, research papers, and documentation.',
+      parameters: {
+        'query': {'type': 'string', 'description': 'The search query for documents', 'required': true},
+        'type': {'type': 'string', 'description': 'Document type (pdf, academic, research, all)', 'default': 'all'},
+        'limit': {'type': 'integer', 'description': 'Maximum number of results (default: 5)', 'default': 5},
+      },
+      execute: _documentSearch,
     );
 
     // Screenshot vision tool - analyzes screenshots using vision AI
@@ -247,6 +260,9 @@ class ExternalToolsService extends ChangeNotifier {
   /// Check if AI can access screenshot vision
   bool get hasScreenshotVisionCapability => _tools.containsKey('screenshot_vision');
 
+  /// Check if AI can access document search
+  bool get hasDocumentSearchCapability => _tools.containsKey('document_search');
+
   /// Set the model switch callback (called by main shell)
   void setModelSwitchCallback(void Function(String modelName) callback) {
     _modelSwitchCallback = callback;
@@ -272,7 +288,9 @@ class ExternalToolsService extends ChangeNotifier {
     if (targetUrls.isEmpty) {
       return {
         'success': false,
-        'error': 'Either url or urls parameter is required',
+        'error': 'Either url or urls parameter is required. Please provide a URL to take screenshot of.',
+        'hint': 'Example: {"url": "https://example.com"} or {"urls": ["https://example.com", "https://google.com"]}',
+        'tool_executed': false,
       };
     }
 
@@ -626,7 +644,8 @@ class ExternalToolsService extends ChangeNotifier {
   Future<Map<String, dynamic>> _webSearch(Map<String, dynamic> params) async {
     final query = params['query'] as String? ?? '';
     final source = params['source'] as String? ?? 'both';
-    final limit = params['limit'] as int? ?? 5;
+    final limit = params['limit'] as int? ?? 8;
+    final deepSearch = params['deep_search'] as bool? ?? true;
 
     if (query.isEmpty) {
       return {
@@ -638,10 +657,11 @@ class ExternalToolsService extends ChangeNotifier {
     try {
       List<Map<String, dynamic>> allResults = [];
       
-      // Wikipedia search
+      // Enhanced Wikipedia search
       if (source == 'wikipedia' || source == 'both') {
         try {
-          final wikipediaUrl = 'https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${Uri.encodeComponent(query)}&srlimit=$limit&format=json&origin=*';
+          // Primary search
+          final wikipediaUrl = 'https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${Uri.encodeComponent(query)}&srlimit=${deepSearch ? limit * 2 : limit}&format=json&origin=*';
           final wikipediaResponse = await http.get(Uri.parse(wikipediaUrl)).timeout(Duration(seconds: 15));
           
           if (wikipediaResponse.statusCode == 200) {
@@ -649,12 +669,51 @@ class ExternalToolsService extends ChangeNotifier {
             final searchResults = wikipediaData['query']['search'] as List? ?? [];
             
             for (final result in searchResults) {
-              allResults.add({
-                'title': result['title'],
-                'snippet': result['snippet']?.replaceAll(RegExp(r'<[^>]*>'), ''),
-                'url': 'https://en.wikipedia.org/wiki/${Uri.encodeComponent(result['title'])}',
-                'source': 'Wikipedia',
-              });
+              final snippet = result['snippet']?.toString().replaceAll(RegExp(r'<[^>]*>'), '') ?? '';
+              if (snippet.isNotEmpty) {
+                allResults.add({
+                  'title': result['title'],
+                  'snippet': snippet,
+                  'url': 'https://en.wikipedia.org/wiki/${Uri.encodeComponent(result['title'])}',
+                  'source': 'Wikipedia',
+                  'pageviews': result['size'] ?? 0,
+                });
+              }
+            }
+          }
+
+          // Deep search: also try OpenSearch API for better suggestions
+          if (deepSearch && allResults.length < 3) {
+            try {
+              final openSearchUrl = 'https://en.wikipedia.org/w/api.php?action=opensearch&search=${Uri.encodeComponent(query)}&limit=5&format=json&origin=*';
+              final openSearchResponse = await http.get(Uri.parse(openSearchUrl)).timeout(Duration(seconds: 10));
+              
+              if (openSearchResponse.statusCode == 200) {
+                final openSearchData = json.decode(openSearchResponse.body) as List;
+                if (openSearchData.length >= 4) {
+                  final titles = openSearchData[1] as List;
+                  final descriptions = openSearchData[2] as List;
+                  final urls = openSearchData[3] as List;
+                  
+                  for (int i = 0; i < titles.length && allResults.length < limit; i++) {
+                    final title = titles[i]?.toString() ?? '';
+                    final description = descriptions[i]?.toString() ?? '';
+                    final url = urls[i]?.toString() ?? '';
+                    
+                    if (title.isNotEmpty && description.isNotEmpty && 
+                        !allResults.any((r) => r['title']?.toString().toLowerCase() == title.toLowerCase())) {
+                      allResults.add({
+                        'title': title,
+                        'snippet': description,
+                        'url': url,
+                        'source': 'Wikipedia (OpenSearch)',
+                      });
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              debugPrint('Wikipedia OpenSearch error: $e');
             }
           }
         } catch (e) {
@@ -662,9 +721,10 @@ class ExternalToolsService extends ChangeNotifier {
         }
       }
 
-      // DuckDuckGo Instant Answer API
+      // Enhanced DuckDuckGo search with fallbacks
       if (source == 'duckduckgo' || source == 'both') {
         try {
+          // Primary DuckDuckGo search
           final duckduckgoUrl = 'https://api.duckduckgo.com/?q=${Uri.encodeComponent(query)}&format=json&no_html=1&skip_disambig=1';
           final duckduckgoResponse = await http.get(Uri.parse(duckduckgoUrl)).timeout(Duration(seconds: 15));
           
@@ -678,18 +738,47 @@ class ExternalToolsService extends ChangeNotifier {
                 'snippet': duckduckgoData['Abstract'],
                 'url': duckduckgoData['AbstractURL'] ?? '',
                 'source': 'DuckDuckGo Abstract',
+                'type': 'primary',
+              });
+            }
+            
+            // Add definition if available
+            if (duckduckgoData['Definition'] != null && duckduckgoData['Definition'].toString().isNotEmpty) {
+              allResults.add({
+                'title': 'Definition: ${query}',
+                'snippet': duckduckgoData['Definition'],
+                'url': duckduckgoData['DefinitionURL'] ?? '',
+                'source': 'DuckDuckGo Definition',
+                'type': 'definition',
               });
             }
             
             // Add related topics
             final relatedTopics = duckduckgoData['RelatedTopics'] as List? ?? [];
-            for (final topic in relatedTopics.take(3)) {
+            for (final topic in relatedTopics.take(deepSearch ? 6 : 3)) {
               if (topic is Map && topic['Text'] != null && topic['Text'].toString().isNotEmpty) {
+                final topicText = topic['Text'].toString();
+                final title = topicText.split(' - ').first;
                 allResults.add({
-                  'title': topic['Text']?.split(' - ').first ?? '',
-                  'snippet': topic['Text'],
+                  'title': title,
+                  'snippet': topicText,
                   'url': topic['FirstURL'] ?? '',
                   'source': 'DuckDuckGo',
+                  'type': 'related',
+                });
+              }
+            }
+
+            // Add results from different categories
+            final results = duckduckgoData['Results'] as List? ?? [];
+            for (final result in results.take(3)) {
+              if (result is Map && result['Text'] != null && result['Text'].toString().isNotEmpty) {
+                allResults.add({
+                  'title': result['Text']?.split(' - ').first ?? query,
+                  'snippet': result['Text'],
+                  'url': result['FirstURL'] ?? '',
+                  'source': 'DuckDuckGo Results',
+                  'type': 'result',
                 });
               }
             }
@@ -699,9 +788,219 @@ class ExternalToolsService extends ChangeNotifier {
         }
       }
 
-      // Limit results and remove duplicates
+      // Enhanced deduplication and sorting
       final uniqueResults = <Map<String, dynamic>>[];
       final seenTitles = <String>{};
+      final seenUrls = <String>{};
+      
+      // Sort results by priority: abstracts/definitions first, then primary results, then related
+      allResults.sort((a, b) {
+        final aType = a['type']?.toString() ?? 'other';
+        final bType = b['type']?.toString() ?? 'other';
+        final priority = {'primary': 0, 'definition': 1, 'result': 2, 'related': 3, 'other': 4};
+        return (priority[aType] ?? 4).compareTo(priority[bType] ?? 4);
+      });
+      
+      for (final result in allResults) {
+        final title = result['title']?.toString().toLowerCase() ?? '';
+        final url = result['url']?.toString() ?? '';
+        final snippet = result['snippet']?.toString() ?? '';
+        
+        if (title.isNotEmpty && snippet.isNotEmpty && 
+            !seenTitles.contains(title) && 
+            !seenUrls.contains(url) &&
+            uniqueResults.length < limit) {
+          seenTitles.add(title);
+          if (url.isNotEmpty) seenUrls.add(url);
+          uniqueResults.add(result);
+        }
+      }
+
+      return {
+        'success': true,
+        'query': query,
+        'source': source,
+        'limit': limit,
+        'deep_search': deepSearch,
+        'results': uniqueResults,
+        'total_found': uniqueResults.length,
+        'tool_executed': true,
+        'execution_time': DateTime.now().toIso8601String(),
+        'description': 'Enhanced web search completed successfully with ${uniqueResults.length} results',
+        'search_details': {
+          'wikipedia_results': uniqueResults.where((r) => r['source']?.toString().contains('Wikipedia') == true).length,
+          'duckduckgo_results': uniqueResults.where((r) => r['source']?.toString().contains('DuckDuckGo') == true).length,
+        }
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': 'Failed to perform web search: $e',
+        'query': query,
+        'source': source,
+        'limit': limit,
+        'tool_executed': true,
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> _documentSearch(Map<String, dynamic> params) async {
+    final query = params['query'] as String? ?? '';
+    final type = params['type'] as String? ?? 'all';
+    final limit = params['limit'] as int? ?? 5;
+
+    if (query.isEmpty) {
+      return {
+        'success': false,
+        'error': 'Query parameter is required',
+      };
+    }
+
+    try {
+      List<Map<String, dynamic>> allResults = [];
+      
+      // Search academic papers and documents through multiple sources
+      
+      // 1. arXiv search for academic papers
+      if (type == 'academic' || type == 'research' || type == 'all') {
+        try {
+          final arxivQuery = query.replaceAll(' ', '+');
+          final arxivUrl = 'http://export.arxiv.org/api/query?search_query=all:$arxivQuery&start=0&max_results=$limit';
+          final arxivResponse = await http.get(Uri.parse(arxivUrl)).timeout(Duration(seconds: 15));
+          
+          if (arxivResponse.statusCode == 200) {
+            final xmlContent = arxivResponse.body;
+            // Simple XML parsing for arXiv entries
+            final entryPattern = RegExp(r'<entry>(.*?)</entry>', dotAll: true);
+            final titlePattern = RegExp(r'<title>(.*?)</title>', dotAll: true);
+            final summaryPattern = RegExp(r'<summary>(.*?)</summary>', dotAll: true);
+            final linkPattern = RegExp(r'<link href="([^"]*)" rel="alternate"');
+            
+            final entries = entryPattern.allMatches(xmlContent);
+            for (final entry in entries.take(3)) {
+              final entryContent = entry.group(1) ?? '';
+              final titleMatch = titlePattern.firstMatch(entryContent);
+              final summaryMatch = summaryPattern.firstMatch(entryContent);
+              final linkMatch = linkPattern.firstMatch(entryContent);
+              
+              if (titleMatch != null && summaryMatch != null) {
+                final title = titleMatch.group(1)?.trim() ?? '';
+                final summary = summaryMatch.group(1)?.trim().replaceAll(RegExp(r'\s+'), ' ') ?? '';
+                final link = linkMatch?.group(1) ?? '';
+                
+                if (title.isNotEmpty && summary.isNotEmpty) {
+                  allResults.add({
+                    'title': title,
+                    'snippet': summary.length > 200 ? '${summary.substring(0, 200)}...' : summary,
+                    'url': link,
+                    'source': 'arXiv (Academic Papers)',
+                    'type': 'academic_paper',
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('arXiv search error: $e');
+        }
+      }
+
+      // 2. Search through DuckDuckGo with PDF-specific queries
+      if (type == 'pdf' || type == 'all') {
+        try {
+          final pdfQuery = '$query filetype:pdf';
+          final duckduckgoUrl = 'https://api.duckduckgo.com/?q=${Uri.encodeComponent(pdfQuery)}&format=json&no_html=1&skip_disambig=1';
+          final duckduckgoResponse = await http.get(Uri.parse(duckduckgoUrl)).timeout(Duration(seconds: 15));
+          
+          if (duckduckgoResponse.statusCode == 200) {
+            final data = json.decode(duckduckgoResponse.body);
+            
+            // Add abstract if available and seems document-related
+            if (data['Abstract'] != null && data['Abstract'].toString().isNotEmpty) {
+              final abstract = data['Abstract'].toString();
+              if (abstract.toLowerCase().contains('pdf') || 
+                  abstract.toLowerCase().contains('document') ||
+                  abstract.toLowerCase().contains('paper') ||
+                  abstract.toLowerCase().contains('research')) {
+                allResults.add({
+                  'title': data['Heading'] ?? 'Document: $query',
+                  'snippet': abstract,
+                  'url': data['AbstractURL'] ?? '',
+                  'source': 'DuckDuckGo Document Search',
+                  'type': 'document',
+                });
+              }
+            }
+            
+            // Add related topics that might be documents
+            final relatedTopics = data['RelatedTopics'] as List? ?? [];
+            for (final topic in relatedTopics.take(3)) {
+              if (topic is Map && topic['Text'] != null && topic['Text'].toString().isNotEmpty) {
+                final topicText = topic['Text'].toString();
+                final url = topic['FirstURL']?.toString() ?? '';
+                
+                // Check if the URL or text suggests it's a document
+                if (url.toLowerCase().contains('.pdf') || 
+                    topicText.toLowerCase().contains('pdf') ||
+                    topicText.toLowerCase().contains('document') ||
+                    topicText.toLowerCase().contains('manual') ||
+                    topicText.toLowerCase().contains('guide')) {
+                  allResults.add({
+                    'title': topicText.split(' - ').first,
+                    'snippet': topicText,
+                    'url': url,
+                    'source': 'DuckDuckGo Documents',
+                    'type': 'document',
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('DuckDuckGo document search error: $e');
+        }
+      }
+
+      // 3. Search educational resources through Wikipedia for documentation
+      if (type == 'all' || type == 'research') {
+        try {
+          final educationalQuery = '$query documentation OR manual OR guide';
+          final wikipediaUrl = 'https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${Uri.encodeComponent(educationalQuery)}&srlimit=3&format=json&origin=*';
+          final wikipediaResponse = await http.get(Uri.parse(wikipediaUrl)).timeout(Duration(seconds: 15));
+          
+          if (wikipediaResponse.statusCode == 200) {
+            final wikipediaData = json.decode(wikipediaResponse.body);
+            final searchResults = wikipediaData['query']['search'] as List? ?? [];
+            
+            for (final result in searchResults) {
+              final snippet = result['snippet']?.toString().replaceAll(RegExp(r'<[^>]*>'), '') ?? '';
+              if (snippet.isNotEmpty) {
+                allResults.add({
+                  'title': result['title'],
+                  'snippet': snippet,
+                  'url': 'https://en.wikipedia.org/wiki/${Uri.encodeComponent(result['title'])}',
+                  'source': 'Wikipedia Documentation',
+                  'type': 'educational',
+                });
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Wikipedia documentation search error: $e');
+        }
+      }
+
+      // Remove duplicates and limit results
+      final uniqueResults = <Map<String, dynamic>>[];
+      final seenTitles = <String>{};
+      
+      // Sort by type priority: academic papers first, then documents, then educational
+      allResults.sort((a, b) {
+        final aType = a['type']?.toString() ?? 'other';
+        final bType = b['type']?.toString() ?? 'other';
+        final priority = {'academic_paper': 0, 'document': 1, 'educational': 2, 'other': 3};
+        return (priority[aType] ?? 3).compareTo(priority[bType] ?? 3);
+      });
       
       for (final result in allResults) {
         final title = result['title']?.toString().toLowerCase() ?? '';
@@ -714,20 +1013,26 @@ class ExternalToolsService extends ChangeNotifier {
       return {
         'success': true,
         'query': query,
-        'source': source,
+        'type': type,
         'limit': limit,
         'results': uniqueResults,
         'total_found': uniqueResults.length,
         'tool_executed': true,
         'execution_time': DateTime.now().toIso8601String(),
-        'description': 'Web search completed successfully with ${uniqueResults.length} results',
+        'description': 'Document search completed successfully with ${uniqueResults.length} results',
+        'search_details': {
+          'academic_papers': uniqueResults.where((r) => r['type'] == 'academic_paper').length,
+          'documents': uniqueResults.where((r) => r['type'] == 'document').length,
+          'educational': uniqueResults.where((r) => r['type'] == 'educational').length,
+        },
+        'sources_searched': ['arXiv', 'DuckDuckGo', 'Wikipedia'],
       };
     } catch (e) {
       return {
         'success': false,
-        'error': 'Failed to perform web search: $e',
+        'error': 'Failed to perform document search: $e',
         'query': query,
-        'source': source,
+        'type': type,
         'limit': limit,
         'tool_executed': true,
       };
@@ -742,11 +1047,49 @@ class ExternalToolsService extends ChangeNotifier {
     if (imageUrl.isEmpty) {
       return {
         'success': false,
-        'error': 'image_url parameter is required',
+        'error': 'image_url parameter is required. Please provide the URL of the image to analyze.',
+        'hint': 'Use this tool after taking a screenshot with the screenshot tool, or provide a direct image URL.',
+        'tool_executed': false,
       };
     }
 
     try {
+      // Validate that the URL is accessible or is a data URL
+      bool isValidUrl = false;
+      String processedImageUrl = imageUrl;
+      
+      if (imageUrl.startsWith('data:image/')) {
+        // It's a base64 data URL, use directly
+        isValidUrl = true;
+        processedImageUrl = imageUrl;
+      } else if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+        // It's a regular URL, verify it's accessible
+        try {
+          final headResponse = await http.head(Uri.parse(imageUrl)).timeout(Duration(seconds: 10));
+          isValidUrl = headResponse.statusCode == 200;
+          processedImageUrl = imageUrl;
+        } catch (e) {
+          // If head request fails, still try to use the URL - it might work with the vision API
+          isValidUrl = true;
+          processedImageUrl = imageUrl;
+        }
+      } else {
+        // Try to construct a proper URL if it looks like a relative path
+        if (imageUrl.startsWith('s0.wp.com') || imageUrl.contains('mshots')) {
+          processedImageUrl = imageUrl.startsWith('http') ? imageUrl : 'https://$imageUrl';
+          isValidUrl = true;
+        }
+      }
+
+      if (!isValidUrl) {
+        return {
+          'success': false,
+          'error': 'Invalid image URL format. Please provide a valid HTTP/HTTPS URL or base64 data URL.',
+          'provided_url': imageUrl,
+          'tool_executed': false,
+        };
+      }
+
       final response = await http.post(
         Uri.parse('https://ahamai-api.officialprakashkrsingh.workers.dev/v1/chat/completions'),
         headers: {
@@ -760,47 +1103,71 @@ class ExternalToolsService extends ChangeNotifier {
               'role': 'user', 
               'content': [
                 {'type': 'text', 'text': question},
-                {'type': 'image_url', 'image_url': {'url': imageUrl}},
+                {'type': 'image_url', 'image_url': {'url': processedImageUrl}},
               ]
             },
           ],
-          'max_tokens': 300,
+          'max_tokens': 500,
           'temperature': 0.7,
         }),
       ).timeout(Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final answer = data['choices'][0]['message']['content'] as String? ?? '';
+        final answer = data['choices']?[0]?['message']?['content'] as String? ?? '';
+
+        if (answer.isEmpty) {
+          return {
+            'success': false,
+            'error': 'Vision API returned empty response. The image might not be accessible or supported.',
+            'question': question,
+            'model': model,
+            'image_url': processedImageUrl,
+            'tool_executed': true,
+          };
+        }
 
         return {
           'success': true,
           'question': question,
           'model': model,
-          'image_url': imageUrl,
+          'image_url': processedImageUrl,
+          'original_url': imageUrl,
           'answer': answer,
           'tool_executed': true,
           'execution_time': DateTime.now().toIso8601String(),
-          'description': 'Screenshot analyzed successfully using vision AI',
+          'description': 'Image analyzed successfully using vision AI',
+          'image_type': imageUrl.startsWith('data:') ? 'uploaded_image' : 'screenshot_url',
         };
       } else {
+        // Try to parse error details
+        String errorDetails = 'Unknown error';
+        try {
+          final errorData = json.decode(response.body);
+          errorDetails = errorData['error']?['message'] ?? 'API error ${response.statusCode}';
+        } catch (e) {
+          errorDetails = 'HTTP ${response.statusCode}: ${response.reasonPhrase}';
+        }
+
         return {
           'success': false,
-          'error': 'API returned status ${response.statusCode}: ${response.reasonPhrase}',
+          'error': 'Vision API error: $errorDetails',
           'question': question,
           'model': model,
-          'image_url': imageUrl,
+          'image_url': processedImageUrl,
+          'status_code': response.statusCode,
           'tool_executed': true,
         };
       }
     } catch (e) {
       return {
         'success': false,
-        'error': 'Failed to analyze screenshot: $e',
+        'error': 'Failed to analyze image: $e',
         'question': question,
         'model': model,
         'image_url': imageUrl,
         'tool_executed': true,
+        'troubleshooting': 'Check if the image URL is accessible and the vision model supports the image format.',
       };
     }
   }
