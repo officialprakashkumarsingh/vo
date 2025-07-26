@@ -1127,6 +1127,7 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
 
   Widget _buildImageWidget(String url) {
     try {
+      Widget image;
       if (url.startsWith('data:image')) {
         final commaIndex = url.indexOf(',');
         final header = url.substring(5, commaIndex);
@@ -1134,35 +1135,30 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
         final base64Data = url.substring(commaIndex + 1);
         final bytes = base64Decode(base64Data);
         if (mime == 'image/svg+xml') {
-          return SvgPicture.memory(
-            bytes,
-            width: double.infinity,
-            fit: BoxFit.contain,
-          );
+          image = SvgPicture.memory(bytes, fit: BoxFit.contain);
+        } else {
+          image = Image.memory(bytes, fit: BoxFit.contain);
         }
-        return Image.memory(
-          bytes,
-          width: double.infinity,
-          fit: BoxFit.contain,
-        );
       } else {
         if (url.toLowerCase().endsWith('.svg')) {
-          return SvgPicture.network(
+          image = SvgPicture.network(
             url,
-            width: double.infinity,
             fit: BoxFit.contain,
-            placeholderBuilder: (context) => Container(
-              alignment: Alignment.center,
-              child: const CircularProgressIndicator(),
-            ),
+            placeholderBuilder: (context) =>
+                const Center(child: CircularProgressIndicator()),
           );
+        } else {
+          image = Image.network(url, fit: BoxFit.contain);
         }
-        return Image.network(
-          url,
-          width: double.infinity,
-          fit: BoxFit.contain,
-        );
       }
+
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 300, maxWidth: double.infinity),
+          child: image,
+        ),
+      );
     } catch (_) {
       return Container(
         height: 200,

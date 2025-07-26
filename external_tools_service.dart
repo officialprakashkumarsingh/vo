@@ -315,7 +315,9 @@ class ExternalToolsService extends ChangeNotifier {
       }
 
       // Use WordPress.com mshots API for screenshots
-      final screenshotUrl = 'https://s0.wp.com/mshots/v1/${Uri.encodeComponent(parsedUrl.toString())}?w=$width&h=$height';
+      final cacheBust = DateTime.now().millisecondsSinceEpoch;
+      final screenshotUrl =
+          'https://s0.wp.com/mshots/v1/${Uri.encodeComponent(parsedUrl.toString())}?w=$width&h=$height&cb=$cacheBust';
       
       // Verify the screenshot service is accessible with a longer timeout
       try {
@@ -376,7 +378,9 @@ class ExternalToolsService extends ChangeNotifier {
         }
 
         // Use WordPress.com mshots API for screenshots
-        final screenshotUrl = 'https://s0.wp.com/mshots/v1/${Uri.encodeComponent(parsedUrl.toString())}?w=$width&h=$height';
+        final cacheBust = DateTime.now().millisecondsSinceEpoch;
+        final screenshotUrl =
+            'https://s0.wp.com/mshots/v1/${Uri.encodeComponent(parsedUrl.toString())}?w=$width&h=$height&cb=$cacheBust';
         
         screenshots.add({
           'index': i + 1,
