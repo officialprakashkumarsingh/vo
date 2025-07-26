@@ -9,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'models.dart';
 import 'character_service.dart';
 import 'external_tools_service.dart';
@@ -2226,62 +2227,115 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Screenshot preview
-                              if (toolName == 'screenshot' && result['success'] == true && result['preview_url'] != null)
-                                Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: _buildImageWidget(
-                                      result['preview_url'],
-                                      onError: () => Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-                                          const SizedBox(height: 8),
-                                          Text(
-                                            'Screenshot generating...\nTap to view directly',
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(color: Colors.grey),
+                              // Screenshot preview(s)
+                              if (toolName == 'screenshot' && result['success'] == true)
+                                ...(() {
+                                  List<Widget> shots = [];
+                                  if (result.containsKey('screenshots') && result['screenshots'] is List) {
+                                    final shotsList = result['screenshots'] as List;
+                                    for (int i = 0; i < shotsList.length; i++) {
+                                      final shot = shotsList[i] as Map;
+                                      shots.add(Container(
+                                        margin: const EdgeInsets.only(bottom: 8),
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
+                                        ),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(8),
+                                          child: _buildImageWidget(
+                                            shot['preview_url'],
+                                            onError: () => Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  'Screenshot generating...\nTap to view directly',
+                                                  textAlign: TextAlign.center,
+                                                  style: TextStyle(color: Colors.grey),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                ElevatedButton(
+                                                  onPressed: () => _launchUrl(shot['preview_url']),
+                                                  child: const Text('View Screenshot'),
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                          const SizedBox(height: 8),
-                                          ElevatedButton(
-                                            onPressed: () => _launchUrl(result['preview_url']),
-                                            child: Text('View Screenshot'),
-                                          ),
-                                        ],
+                                        ),
+                                      ));
+                                    }
+                                  } else if (result['preview_url'] != null) {
+                                    shots.add(Container(
+                                      margin: const EdgeInsets.only(bottom: 8),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
                                       ),
-                                    ),
-                                  ),
-                                ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: _buildImageWidget(
+                                          result['preview_url'],
+                                          onError: () => Column(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+                                              const SizedBox(height: 8),
+                                              Text(
+                                                'Screenshot generating...\nTap to view directly',
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(color: Colors.grey),
+                                              ),
+                                              const SizedBox(height: 8),
+                                              ElevatedButton(
+                                                onPressed: () => _launchUrl(result['preview_url']),
+                                                child: const Text('View Screenshot'),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ));
+                                  }
+                                  if (result['total_screenshots'] != null) {
+                                    shots.add(Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Text('Total Screenshots: ${result['total_screenshots']}',
+                                          style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF000000))),
+                                    ));
+                                  }
+                                  return shots;
+                                })(),
                               
                               // Result details
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.black87,
-                                  borderRadius: BorderRadius.circular(8),
+                              if ((result['url'] != null) ||
+                                  (result['models'] != null) ||
+                                  (result['new_model'] != null) ||
+                                  (result['api_status'] != null) ||
+                                  (result['error'] != null))
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black87,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (result['url'] != null)
+                                        _buildResultRow('URL', result['url']),
+                                      if (result['models'] != null)
+                                        _buildResultRow('Models Count', '${(result['models'] as List).length}'),
+                                      if (result['new_model'] != null)
+                                        _buildResultRow('New Model', result['new_model']),
+                                      if (result['api_status'] != null)
+                                        _buildResultRow('API Status', result['api_status']),
+                                      if (result['error'] != null)
+                                        _buildResultRow('Error', result['error'], isError: true),
+                                    ],
+                                  ),
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (result['url'] != null)
-                                      _buildResultRow('URL', result['url']),
-                                    if (result['models'] != null)
-                                      _buildResultRow('Models Count', '${(result['models'] as List).length}'),
-                                    if (result['new_model'] != null)
-                                      _buildResultRow('New Model', result['new_model']),
-                                    if (result['api_status'] != null)
-                                      _buildResultRow('API Status', result['api_status']),
-                                    if (result['error'] != null)
-                                      _buildResultRow('Error', result['error'], isError: true),
-                                  ],
-                                ),
-                              ),
 
                               if (toolName == 'generate_image' && result['success'] == true && result['image_url'] != null)
                                 Container(
@@ -2370,8 +2424,19 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
   Widget _buildImageWidget(String url, {Widget Function()? onError}) {
     try {
       if (url.startsWith('data:image')) {
-        final base64Data = url.substring(url.indexOf(',') + 1);
+        final commaIndex = url.indexOf(',');
+        final header = url.substring(5, commaIndex); // image/png;base64
+        final mime = header.split(';').first;
+        final base64Data = url.substring(commaIndex + 1);
         final bytes = base64Decode(base64Data);
+        if (mime == 'image/svg+xml') {
+          return SvgPicture.memory(
+            bytes,
+            height: 200,
+            width: double.infinity,
+            fit: BoxFit.contain,
+          );
+        }
         return Image.memory(
           bytes,
           height: 200,
@@ -2379,6 +2444,19 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
           fit: BoxFit.cover,
         );
       } else {
+        if (url.toLowerCase().endsWith('.svg')) {
+          return SvgPicture.network(
+            url,
+            height: 200,
+            width: double.infinity,
+            fit: BoxFit.contain,
+            placeholderBuilder: (context) => Container(
+              height: 200,
+              alignment: Alignment.center,
+              child: const CircularProgressIndicator(),
+            ),
+          );
+        }
         return Image.network(
           url,
           height: 200,
