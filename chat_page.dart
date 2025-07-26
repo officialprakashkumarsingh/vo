@@ -483,27 +483,20 @@ Be conversational and helpful!'''
         case 'screenshot':
           // Handle multiple screenshots if they exist
           if (result.containsKey('screenshots') && result['screenshots'] is List) {
-            final screenshots = result['screenshots'] as List;
-            String screenshotLinks = '';
-            for (int i = 0; i < screenshots.length; i++) {
-              final screenshot = screenshots[i];
-              screenshotLinks += '**Screenshot ${i + 1}:** [View Screenshot](${screenshot['preview_url']})\n';
-            }
             return '''**🖼️ Multiple Screenshots Captured Successfully**
 
-$screenshotLinks
+**Total Screenshots:** ${result['total_screenshots']}
 **Service:** ${result['service']}
 
-✅ All screenshots captured and available for viewing!''';
+✅ All screenshots are displayed in the tools panel.''';
           } else {
             return '''**🖼️ Screenshot Tool Executed Successfully**
 
 **URL:** ${result['url']}
-**Screenshot:** [View Screenshot](${result['preview_url']})
 **Dimensions:** ${result['width']}x${result['height']}
 **Service:** ${result['service']}
 
-✅ Screenshot captured and available for viewing!''';
+✅ Screenshot captured successfully and shown in the tools panel.''';
           }
 
         case 'fetch_ai_models':
@@ -534,8 +527,6 @@ $screenshotLinks
 **Model:** ${result['model']}
 **Dimensions:** ${result['width']}x${result['height']}
 **Image Size:** ${(result['image_size'] as int? ?? 0) ~/ 1024}KB
-
-![Generated Image](${result['image_url']})
 
 ✅ Image generated successfully using ${result['model']} model!''';
 

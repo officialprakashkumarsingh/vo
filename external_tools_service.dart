@@ -1040,8 +1040,14 @@ class ExternalToolsService extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _generateMermaidChart(Map<String, dynamic> params) async {
-    final diagram = params['diagram'] as String? ?? '';
+    String diagram = params['diagram'] as String? ?? '';
     final format = params['format'] as String? ?? 'svg';
+
+    // Ensure diagram uses a dark theme with white text so it renders clearly
+    final themeSnippet = "%%{init: {'theme': 'dark'}}%%\n";
+    if (!diagram.trim().startsWith('%%{')) {
+      diagram = themeSnippet + diagram;
+    }
 
     if (diagram.isEmpty) {
       return {
