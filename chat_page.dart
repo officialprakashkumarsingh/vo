@@ -278,7 +278,7 @@ For parallel tool execution (when multiple tools are needed), use this array for
 - **fetch_image_models**: Show available image generation models
 - **web_search**: Get real-time information from DuckDuckGo and Wikipedia (enhanced with deep search)
 - **screenshot_vision**: Analyze screenshots you've captured to understand content
-- **mermaid_chart**: Generate diagrams and charts using mermaid.js
+- **mermaid_chart**: Generate diagrams and charts using mermaid.js (always include the `diagram` parameter)
 - **fetch_ai_models**: List available AI chat models
 - **switch_ai_model**: Change to different AI model
 
@@ -1124,56 +1124,6 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
     _toggleActions();
   }
 
-  List<Widget> _buildAttachments() {
-    final List<Widget> widgets = [];
-    final data = widget.message.toolData;
-    for (final entry in data.entries) {
-      final tool = entry.key;
-      final result = entry.value;
-      if (result is Map && result['success'] == true) {
-        if (tool == 'generate_image' && result['image_url'] != null) {
-          widgets.add(Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: _buildImageWidget(result['image_url']),
-            ),
-          ));
-        } else if (tool == 'mermaid_chart' && result['image_url'] != null) {
-          widgets.add(Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: _buildImageWidget(result['image_url']),
-            ),
-          ));
-        } else if (tool == 'screenshot') {
-          if (result['screenshots'] is List) {
-            for (final shot in result['screenshots']) {
-              if (shot is Map && shot['preview_url'] != null) {
-                widgets.add(Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: _buildImageWidget(shot['preview_url']),
-                  ),
-                ));
-              }
-            }
-          } else if (result['preview_url'] != null) {
-            widgets.add(Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: _buildImageWidget(result['preview_url']),
-              ),
-            ));
-          }
-        }
-      }
-    }
-    return widgets;
-  }
 
   Widget _buildImageWidget(String url) {
     try {
@@ -1186,26 +1136,22 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
         if (mime == 'image/svg+xml') {
           return SvgPicture.memory(
             bytes,
-            height: 200,
             width: double.infinity,
             fit: BoxFit.contain,
           );
         }
         return Image.memory(
           bytes,
-          height: 200,
           width: double.infinity,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
         );
       } else {
         if (url.toLowerCase().endsWith('.svg')) {
           return SvgPicture.network(
             url,
-            height: 200,
             width: double.infinity,
             fit: BoxFit.contain,
             placeholderBuilder: (context) => Container(
-              height: 200,
               alignment: Alignment.center,
               child: const CircularProgressIndicator(),
             ),
@@ -1213,9 +1159,8 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
         }
         return Image.network(
           url,
-          height: 200,
           width: double.infinity,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
         );
       }
     } catch (_) {
@@ -1244,6 +1189,7 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
       child: isBot
           ? MarkdownBody(
               data: widget.message.displayText,
+              imageBuilder: (uri, title, alt) => _buildImageWidget(uri.toString()),
               styleSheet: MarkdownStyleSheet(
                 p: const TextStyle(
                   fontSize: 15, 
@@ -1291,10 +1237,6 @@ class _MessageBubbleState extends State<_MessageBubble> with TickerProviderState
             _ThoughtsPanel(thoughts: widget.message.thoughts),
           if (isBot && widget.message.codes.isNotEmpty)
             _CodePanel(codes: widget.message.codes),
-          if (isBot) ...(() {
-            final attachments = _buildAttachments();
-            return attachments.isNotEmpty ? attachments : <Widget>[];
-          })(),
           // Tool results panel for bot messages
           if (isBot && widget.message.toolData.isNotEmpty)
             _ToolResultsPanel(toolData: widget.message.toolData),
