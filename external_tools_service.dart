@@ -112,17 +112,6 @@ class ExternalToolsService extends ChangeNotifier {
       execute: _webSearch,
     );
 
-    // Document search tool - searches for PDF documents and academic papers
-    _tools['document_search'] = ExternalTool(
-      name: 'document_search',
-      description: 'Searches for PDF documents, academic papers, and research content from public sources. The AI can use this tool to find educational content, research papers, and documentation.',
-      parameters: {
-        'query': {'type': 'string', 'description': 'The search query for documents', 'required': true},
-        'type': {'type': 'string', 'description': 'Document type (pdf, academic, research, all)', 'default': 'all'},
-        'limit': {'type': 'integer', 'description': 'Maximum number of results (default: 5)', 'default': 5},
-      },
-      execute: _documentSearch,
-    );
 
     // Screenshot vision tool - analyzes screenshots using vision AI
     _tools['screenshot_vision'] = ExternalTool(
@@ -134,6 +123,17 @@ class ExternalToolsService extends ChangeNotifier {
         'model': {'type': 'string', 'description': 'Vision model to use', 'default': 'claude-4-sonnet'},
       },
       execute: _screenshotVision,
+    );
+
+    // Mermaid chart generation - create diagrams using mermaid.js via the Kroki service
+    _tools['mermaid_chart'] = ExternalTool(
+      name: 'mermaid_chart',
+      description: 'Generates charts and diagrams using mermaid.js and returns a preview image. Useful for simple flow charts, sequence diagrams, and more.',
+      parameters: {
+        'diagram': {'type': 'string', 'description': 'Mermaid diagram code', 'required': true},
+        'format': {'type': 'string', 'description': 'Image format (svg or png)', 'default': 'svg'},
+      },
+      execute: _generateMermaidChart,
     );
   }
 
@@ -260,8 +260,6 @@ class ExternalToolsService extends ChangeNotifier {
   /// Check if AI can access screenshot vision
   bool get hasScreenshotVisionCapability => _tools.containsKey('screenshot_vision');
 
-  /// Check if AI can access document search
-  bool get hasDocumentSearchCapability => _tools.containsKey('document_search');
 
   /// Set the model switch callback (called by main shell)
   void setModelSwitchCallback(void Function(String modelName) callback) {
@@ -785,6 +783,54 @@ class ExternalToolsService extends ChangeNotifier {
           }
         } catch (e) {
           debugPrint('DuckDuckGo search error: $e');
+          // Fallback to DuckDuckGo lite HTML parsing
+          try {
+            final liteUrl = 'https://lite.duckduckgo.com/50x.html?kd=-1&kp=1&q=${Uri.encodeComponent(query)}';
+            final liteResp = await http.get(Uri.parse(liteUrl)).timeout(const Duration(seconds: 15));
+            if (liteResp.statusCode == 200) {
+              final html = liteResp.body;
+              final itemRegex = RegExp(r'<a rel="nofollow" class="result-link" href="([^"]*)">(.*?)<\/a>', dotAll: true);
+              final matches = itemRegex.allMatches(html).take(limit);
+              for (final m in matches) {
+                final url = Uri.decodeFull(m.group(1) ?? '');
+                final title = m.group(2)?.replaceAll(RegExp(r'<[^>]*>'), '') ?? '';
+                if (title.isNotEmpty && url.isNotEmpty) {
+                  allResults.add({
+                    'title': title,
+                    'snippet': '',
+                    'url': url,
+                    'source': 'DuckDuckGo Lite',
+                    'type': 'result',
+                  });
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('DuckDuckGo fallback error: $e');
+          }
+
+          // As a secondary fallback, try Qwant's open search API
+          try {
+            final qwantUrl = 'https://api.qwant.com/api/search/web?count=$limit&q=${Uri.encodeComponent(query)}&t=web&locale=en_US&offset=0';
+            final qwantResp = await http.get(Uri.parse(qwantUrl)).timeout(const Duration(seconds: 15));
+            if (qwantResp.statusCode == 200) {
+              final data = json.decode(qwantResp.body);
+              final items = data['data']?['result']?['items']?['mainline'] as List? ?? [];
+              for (final item in items) {
+                if (item is Map && item['type'] == 'web') {
+                  allResults.add({
+                    'title': item['title'] ?? '',
+                    'snippet': item['desc'] ?? '',
+                    'url': item['url'] ?? '',
+                    'source': 'Qwant',
+                    'type': 'result',
+                  });
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('Qwant search error: $e');
+          }
         }
       }
 
@@ -844,200 +890,6 @@ class ExternalToolsService extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>> _documentSearch(Map<String, dynamic> params) async {
-    final query = params['query'] as String? ?? '';
-    final type = params['type'] as String? ?? 'all';
-    final limit = params['limit'] as int? ?? 5;
-
-    if (query.isEmpty) {
-      return {
-        'success': false,
-        'error': 'Query parameter is required',
-      };
-    }
-
-    try {
-      List<Map<String, dynamic>> allResults = [];
-      
-      // Search academic papers and documents through multiple sources
-      
-      // 1. arXiv search for academic papers
-      if (type == 'academic' || type == 'research' || type == 'all') {
-        try {
-          final arxivQuery = query.replaceAll(' ', '+');
-          final arxivUrl = 'http://export.arxiv.org/api/query?search_query=all:$arxivQuery&start=0&max_results=$limit';
-          final arxivResponse = await http.get(Uri.parse(arxivUrl)).timeout(Duration(seconds: 15));
-          
-          if (arxivResponse.statusCode == 200) {
-            final xmlContent = arxivResponse.body;
-            // Simple XML parsing for arXiv entries
-            final entryPattern = RegExp(r'<entry>(.*?)</entry>', dotAll: true);
-            final titlePattern = RegExp(r'<title>(.*?)</title>', dotAll: true);
-            final summaryPattern = RegExp(r'<summary>(.*?)</summary>', dotAll: true);
-            final linkPattern = RegExp(r'<link href="([^"]*)" rel="alternate"');
-            
-            final entries = entryPattern.allMatches(xmlContent);
-            for (final entry in entries.take(3)) {
-              final entryContent = entry.group(1) ?? '';
-              final titleMatch = titlePattern.firstMatch(entryContent);
-              final summaryMatch = summaryPattern.firstMatch(entryContent);
-              final linkMatch = linkPattern.firstMatch(entryContent);
-              
-              if (titleMatch != null && summaryMatch != null) {
-                final title = titleMatch.group(1)?.trim() ?? '';
-                final summary = summaryMatch.group(1)?.trim().replaceAll(RegExp(r'\s+'), ' ') ?? '';
-                final link = linkMatch?.group(1) ?? '';
-                
-                if (title.isNotEmpty && summary.isNotEmpty) {
-                  allResults.add({
-                    'title': title,
-                    'snippet': summary.length > 200 ? '${summary.substring(0, 200)}...' : summary,
-                    'url': link,
-                    'source': 'arXiv (Academic Papers)',
-                    'type': 'academic_paper',
-                  });
-                }
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('arXiv search error: $e');
-        }
-      }
-
-      // 2. Search through DuckDuckGo with PDF-specific queries
-      if (type == 'pdf' || type == 'all') {
-        try {
-          final pdfQuery = '$query filetype:pdf';
-          final duckduckgoUrl = 'https://api.duckduckgo.com/?q=${Uri.encodeComponent(pdfQuery)}&format=json&no_html=1&skip_disambig=1';
-          final duckduckgoResponse = await http.get(Uri.parse(duckduckgoUrl)).timeout(Duration(seconds: 15));
-          
-          if (duckduckgoResponse.statusCode == 200) {
-            final data = json.decode(duckduckgoResponse.body);
-            
-            // Add abstract if available and seems document-related
-            if (data['Abstract'] != null && data['Abstract'].toString().isNotEmpty) {
-              final abstract = data['Abstract'].toString();
-              if (abstract.toLowerCase().contains('pdf') || 
-                  abstract.toLowerCase().contains('document') ||
-                  abstract.toLowerCase().contains('paper') ||
-                  abstract.toLowerCase().contains('research')) {
-                allResults.add({
-                  'title': data['Heading'] ?? 'Document: $query',
-                  'snippet': abstract,
-                  'url': data['AbstractURL'] ?? '',
-                  'source': 'DuckDuckGo Document Search',
-                  'type': 'document',
-                });
-              }
-            }
-            
-            // Add related topics that might be documents
-            final relatedTopics = data['RelatedTopics'] as List? ?? [];
-            for (final topic in relatedTopics.take(3)) {
-              if (topic is Map && topic['Text'] != null && topic['Text'].toString().isNotEmpty) {
-                final topicText = topic['Text'].toString();
-                final url = topic['FirstURL']?.toString() ?? '';
-                
-                // Check if the URL or text suggests it's a document
-                if (url.toLowerCase().contains('.pdf') || 
-                    topicText.toLowerCase().contains('pdf') ||
-                    topicText.toLowerCase().contains('document') ||
-                    topicText.toLowerCase().contains('manual') ||
-                    topicText.toLowerCase().contains('guide')) {
-                  allResults.add({
-                    'title': topicText.split(' - ').first,
-                    'snippet': topicText,
-                    'url': url,
-                    'source': 'DuckDuckGo Documents',
-                    'type': 'document',
-                  });
-                }
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('DuckDuckGo document search error: $e');
-        }
-      }
-
-      // 3. Search educational resources through Wikipedia for documentation
-      if (type == 'all' || type == 'research') {
-        try {
-          final educationalQuery = '$query documentation OR manual OR guide';
-          final wikipediaUrl = 'https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${Uri.encodeComponent(educationalQuery)}&srlimit=3&format=json&origin=*';
-          final wikipediaResponse = await http.get(Uri.parse(wikipediaUrl)).timeout(Duration(seconds: 15));
-          
-          if (wikipediaResponse.statusCode == 200) {
-            final wikipediaData = json.decode(wikipediaResponse.body);
-            final searchResults = wikipediaData['query']['search'] as List? ?? [];
-            
-            for (final result in searchResults) {
-              final snippet = result['snippet']?.toString().replaceAll(RegExp(r'<[^>]*>'), '') ?? '';
-              if (snippet.isNotEmpty) {
-                allResults.add({
-                  'title': result['title'],
-                  'snippet': snippet,
-                  'url': 'https://en.wikipedia.org/wiki/${Uri.encodeComponent(result['title'])}',
-                  'source': 'Wikipedia Documentation',
-                  'type': 'educational',
-                });
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('Wikipedia documentation search error: $e');
-        }
-      }
-
-      // Remove duplicates and limit results
-      final uniqueResults = <Map<String, dynamic>>[];
-      final seenTitles = <String>{};
-      
-      // Sort by type priority: academic papers first, then documents, then educational
-      allResults.sort((a, b) {
-        final aType = a['type']?.toString() ?? 'other';
-        final bType = b['type']?.toString() ?? 'other';
-        final priority = {'academic_paper': 0, 'document': 1, 'educational': 2, 'other': 3};
-        return (priority[aType] ?? 3).compareTo(priority[bType] ?? 3);
-      });
-      
-      for (final result in allResults) {
-        final title = result['title']?.toString().toLowerCase() ?? '';
-        if (title.isNotEmpty && !seenTitles.contains(title) && uniqueResults.length < limit) {
-          seenTitles.add(title);
-          uniqueResults.add(result);
-        }
-      }
-
-      return {
-        'success': true,
-        'query': query,
-        'type': type,
-        'limit': limit,
-        'results': uniqueResults,
-        'total_found': uniqueResults.length,
-        'tool_executed': true,
-        'execution_time': DateTime.now().toIso8601String(),
-        'description': 'Document search completed successfully with ${uniqueResults.length} results',
-        'search_details': {
-          'academic_papers': uniqueResults.where((r) => r['type'] == 'academic_paper').length,
-          'documents': uniqueResults.where((r) => r['type'] == 'document').length,
-          'educational': uniqueResults.where((r) => r['type'] == 'educational').length,
-        },
-        'sources_searched': ['arXiv', 'DuckDuckGo', 'Wikipedia'],
-      };
-    } catch (e) {
-      return {
-        'success': false,
-        'error': 'Failed to perform document search: $e',
-        'query': query,
-        'type': type,
-        'limit': limit,
-        'tool_executed': true,
-      };
-    }
-  }
 
   Future<Map<String, dynamic>> _screenshotVision(Map<String, dynamic> params) async {
     final imageUrl = params['image_url'] as String? ?? '';
@@ -1066,7 +918,7 @@ class ExternalToolsService extends ChangeNotifier {
         // It's a regular URL, verify it's accessible
         try {
           final headResponse = await http.head(Uri.parse(imageUrl)).timeout(Duration(seconds: 10));
-          isValidUrl = headResponse.statusCode == 200;
+          isValidUrl = headResponse.statusCode >= 200 && headResponse.statusCode < 400;
           processedImageUrl = imageUrl;
         } catch (e) {
           // If head request fails, still try to use the URL - it might work with the vision API
@@ -1090,6 +942,18 @@ class ExternalToolsService extends ChangeNotifier {
         };
       }
 
+      // If the image is a remote URL, fetch and convert to base64 to avoid
+      // remote access issues with the vision API
+      if (!processedImageUrl.startsWith('data:image')) {
+        try {
+          final imgResp = await http.get(Uri.parse(processedImageUrl)).timeout(const Duration(seconds: 20));
+          if (imgResp.statusCode >= 200 && imgResp.statusCode < 400) {
+            final mime = imgResp.headers['content-type'] ?? 'image/jpeg';
+            processedImageUrl = 'data:$mime;base64,${base64Encode(imgResp.bodyBytes)}';
+          }
+        } catch (_) {}
+      }
+
       final response = await http.post(
         Uri.parse('https://ahamai-api.officialprakashkrsingh.workers.dev/v1/chat/completions'),
         headers: {
@@ -1103,7 +967,10 @@ class ExternalToolsService extends ChangeNotifier {
               'role': 'user', 
               'content': [
                 {'type': 'text', 'text': question},
-                {'type': 'image_url', 'image_url': {'url': processedImageUrl}},
+                {
+                  'type': 'image_url',
+                  'image_url': {'url': processedImageUrl, 'detail': 'auto'}
+                },
               ]
             },
           ],
@@ -1168,6 +1035,56 @@ class ExternalToolsService extends ChangeNotifier {
         'image_url': imageUrl,
         'tool_executed': true,
         'troubleshooting': 'Check if the image URL is accessible and the vision model supports the image format.',
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> _generateMermaidChart(Map<String, dynamic> params) async {
+    final diagram = params['diagram'] as String? ?? '';
+    final format = params['format'] as String? ?? 'svg';
+
+    if (diagram.isEmpty) {
+      return {
+        'success': false,
+        'error': 'diagram parameter is required',
+        'tool_executed': false,
+      };
+    }
+
+    try {
+      final url = 'https://kroki.io/mermaid/$format';
+      final response = await http
+          .post(Uri.parse(url), headers: {'Content-Type': 'text/plain'}, body: diagram)
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final bytes = response.bodyBytes;
+        final mime = format == 'png' ? 'image/png' : 'image/svg+xml';
+        final base64Data = base64Encode(bytes);
+        final dataUrl = 'data:$mime;base64,$base64Data';
+
+        return {
+          'success': true,
+          'format': format,
+          'diagram': diagram,
+          'image_url': dataUrl,
+          'size': bytes.length,
+          'tool_executed': true,
+          'execution_time': DateTime.now().toIso8601String(),
+          'description': 'Mermaid diagram generated successfully',
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Failed to generate chart: HTTP ${response.statusCode}',
+          'tool_executed': true,
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'error': 'Chart generation error: $e',
+        'tool_executed': true,
       };
     }
   }

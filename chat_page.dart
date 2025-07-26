@@ -276,15 +276,14 @@ For parallel tool execution (when multiple tools are needed), use this array for
 - **generate_image**: Create images, art, visual content (models: flux, turbo)
 - **fetch_image_models**: Show available image generation models
 - **web_search**: Get real-time information from DuckDuckGo and Wikipedia (enhanced with deep search)
-- **document_search**: Find PDF documents, academic papers, research content
 - **screenshot_vision**: Analyze screenshots you've captured to understand content
+- **mermaid_chart**: Generate diagrams and charts using mermaid.js
 - **fetch_ai_models**: List available AI chat models
 - **switch_ai_model**: Change to different AI model
 
 🔗 PARALLEL EXECUTION:
 You can now use multiple tools simultaneously! For example:
 - Take screenshot + analyze it with vision
-- Search web + search documents for comprehensive research
 - Generate image + search for related information
 - Fetch models + take screenshot
 
@@ -535,9 +534,7 @@ $screenshotLinks
 **Dimensions:** ${result['width']}x${result['height']}
 **Image Size:** ${(result['image_size'] as int? ?? 0) ~/ 1024}KB
 
-<div style="border-radius: 12px; overflow: hidden; display: inline-block;">
-<img src="${result['image_url']}" alt="Generated Image" style="border-radius: 12px; max-width: 100%; height: auto;" />
-</div>
+![Generated Image](${result['image_url']})
 
 ✅ Image generated successfully using ${result['model']} model!''';
 
@@ -596,44 +593,17 @@ $resultsList
 **Model:** ${result['model']}
 **Analysis:** ${result['answer']}
 
-✅ Screenshot analyzed successfully using vision AI!''';
+          ✅ Screenshot analyzed successfully using vision AI!''';
 
-        case 'document_search':
-          final results = result['results'] as List;
-          String resultsList = '';
-          for (int i = 0; i < results.length && i < 3; i++) {
-            final res = results[i] as Map<String, dynamic>;
-            final source = res['source']?.toString() ?? '';
-            final type = res['type']?.toString() ?? '';
-            String icon = '📄';
-            if (type == 'academic_paper') icon = '🎓';
-            else if (type == 'document') icon = '📋';
-            else if (type == 'educational') icon = '📚';
-            
-            resultsList += '$icon **${res['title']}** ($source)\n';
-            resultsList += '   ${res['snippet']}\n';
-            if (res['url']?.toString().isNotEmpty == true) {
-              resultsList += '   🔗 [Access Document](${res['url']})\n';
-            }
-            resultsList += '\n';
-          }
-          
-          final searchDetails = result['search_details'] as Map<String, dynamic>? ?? {};
-          return '''**📚 Document Search Completed Successfully**
+        case 'mermaid_chart':
+          return '''**📊 Mermaid Chart Generated**
 
-**Query:** ${result['query']}
-**Type:** ${result['type']}
-**Sources:** ${(result['sources_searched'] as List? ?? []).join(', ')}
+**Format:** ${result['format']}
 
-**Found Documents:**
-$resultsList
+![Diagram](${result['image_url']})
 
-**Search Summary:**
-- Academic Papers: ${searchDetails['academic_papers'] ?? 0}
-- Documents: ${searchDetails['documents'] ?? 0}
-- Educational Content: ${searchDetails['educational'] ?? 0}
+✅ Diagram generated successfully!''';
 
-✅ Document search completed with ${result['total_found']} results!''';
 
         default:
           return '''**🛠️ Tool Executed: $toolName**
@@ -2266,46 +2236,25 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
                                   ),
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(8),
-                                    child: Image.network(
+                                    child: _buildImageWidget(
                                       result['preview_url'],
-                                      height: 200,
-                                      width: double.infinity,
-                                      fit: BoxFit.cover,
-                                      loadingBuilder: (context, child, loadingProgress) {
-                                        if (loadingProgress == null) return child;
-                                        return Container(
-                                          height: 200,
-                                          alignment: Alignment.center,
-                                          child: CircularProgressIndicator(
-                                            value: loadingProgress.expectedTotalBytes != null
-                                                ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
-                                                : null,
+                                      onError: () => Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'Screenshot generating...\nTap to view directly',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(color: Colors.grey),
                                           ),
-                                        );
-                                      },
-                                      errorBuilder: (context, error, stackTrace) {
-                                        return Container(
-                                          height: 200,
-                                          alignment: Alignment.center,
-                                          child: Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                'Screenshot generating...\nTap to view directly',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(color: Colors.grey),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              ElevatedButton(
-                                                onPressed: () => _launchUrl(result['preview_url']),
-                                                child: Text('View Screenshot'),
-                                              ),
-                                            ],
+                                          const SizedBox(height: 8),
+                                          ElevatedButton(
+                                            onPressed: () => _launchUrl(result['preview_url']),
+                                            child: Text('View Screenshot'),
                                           ),
-                                        );
-                                      },
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -2333,6 +2282,32 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
                                   ],
                                 ),
                               ),
+
+                              if (toolName == 'generate_image' && result['success'] == true && result['image_url'] != null)
+                                Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: _buildImageWidget(result['image_url']),
+                                  ),
+                                ),
+
+                              if (toolName == 'mermaid_chart' && result['success'] == true && result['image_url'] != null)
+                                Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: _buildImageWidget(result['image_url']),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -2390,6 +2365,56 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
         backgroundColor: Colors.green,
       ),
     );
+  }
+
+  Widget _buildImageWidget(String url, {Widget Function()? onError}) {
+    try {
+      if (url.startsWith('data:image')) {
+        final base64Data = url.substring(url.indexOf(',') + 1);
+        final bytes = base64Decode(base64Data);
+        return Image.memory(
+          bytes,
+          height: 200,
+          width: double.infinity,
+          fit: BoxFit.cover,
+        );
+      } else {
+        return Image.network(
+          url,
+          height: 200,
+          width: double.infinity,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Container(
+              height: 200,
+              alignment: Alignment.center,
+              child: CircularProgressIndicator(
+                value: loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded /
+                        loadingProgress.expectedTotalBytes!
+                    : null,
+              ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              height: 200,
+              alignment: Alignment.center,
+              child: onError?.call() ??
+                  Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+            );
+          },
+        );
+      }
+    } catch (_) {
+      return Container(
+        height: 200,
+        alignment: Alignment.center,
+        child: onError?.call() ??
+            Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+      );
+    }
   }
 }
 

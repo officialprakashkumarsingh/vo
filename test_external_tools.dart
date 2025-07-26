@@ -135,7 +135,7 @@ class _ToolTestPageState extends State<ToolTestPage> {
 
     _log('🎉 All tool tests completed successfully!');
     _log('✅ Tools are now robust and execute properly!');
-    _log('✅ Web search tool has been removed as requested');
+    _log('✅ Web search tool is working with DuckDuckGo and Qwant fallbacks');
     _log('✅ Screenshot tool uses WordPress preview directly');
     _log('✅ AI models tools are working and robust');
     
