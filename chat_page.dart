@@ -276,7 +276,6 @@ For parallel tool execution (when multiple tools are needed), use this array for
 - **generate_image**: Create images, art, visual content (models: flux, turbo)
 - **fetch_image_models**: Show available image generation models
 - **web_search**: Get real-time information from DuckDuckGo and Wikipedia (enhanced with deep search)
-- **document_search**: Find PDF documents, academic papers, research content
 - **screenshot_vision**: Analyze screenshots you've captured to understand content
 - **mermaid_chart**: Generate diagrams and charts using mermaid.js
 - **fetch_ai_models**: List available AI chat models
@@ -285,7 +284,6 @@ For parallel tool execution (when multiple tools are needed), use this array for
 🔗 PARALLEL EXECUTION:
 You can now use multiple tools simultaneously! For example:
 - Take screenshot + analyze it with vision
-- Search web + search documents for comprehensive research
 - Generate image + search for related information
 - Fetch models + take screenshot
 
@@ -606,42 +604,6 @@ $resultsList
 
 ✅ Diagram generated successfully!''';
 
-        case 'document_search':
-          final results = result['results'] as List;
-          String resultsList = '';
-          for (int i = 0; i < results.length && i < 3; i++) {
-            final res = results[i] as Map<String, dynamic>;
-            final source = res['source']?.toString() ?? '';
-            final type = res['type']?.toString() ?? '';
-            String icon = '📄';
-            if (type == 'academic_paper') icon = '🎓';
-            else if (type == 'document') icon = '📋';
-            else if (type == 'educational') icon = '📚';
-            
-            resultsList += '$icon **${res['title']}** ($source)\n';
-            resultsList += '   ${res['snippet']}\n';
-            if (res['url']?.toString().isNotEmpty == true) {
-              resultsList += '   🔗 [Access Document](${res['url']})\n';
-            }
-            resultsList += '\n';
-          }
-          
-          final searchDetails = result['search_details'] as Map<String, dynamic>? ?? {};
-          return '''**📚 Document Search Completed Successfully**
-
-**Query:** ${result['query']}
-**Type:** ${result['type']}
-**Sources:** ${(result['sources_searched'] as List? ?? []).join(', ')}
-
-**Found Documents:**
-$resultsList
-
-**Search Summary:**
-- Academic Papers: ${searchDetails['academic_papers'] ?? 0}
-- Documents: ${searchDetails['documents'] ?? 0}
-- Educational Content: ${searchDetails['educational'] ?? 0}
-
-✅ Document search completed with ${result['total_found']} results!''';
 
         default:
           return '''**🛠️ Tool Executed: $toolName**
@@ -2341,6 +2303,56 @@ class _ToolResultsPanelState extends State<_ToolResultsPanel> with SingleTickerP
                                   ],
                                 ),
                               ),
+
+                              if (toolName == 'generate_image' && result['success'] == true && result['image_url'] != null)
+                                Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.network(
+                                      result['image_url'],
+                                      height: 200,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return Container(
+                                          height: 200,
+                                          alignment: Alignment.center,
+                                          child: Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
+
+                              if (toolName == 'mermaid_chart' && result['success'] == true && result['image_url'] != null)
+                                Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: const Color(0xFF000000).withOpacity(0.1)),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.network(
+                                      result['image_url'],
+                                      height: 200,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return Container(
+                                          height: 200,
+                                          alignment: Alignment.center,
+                                          child: Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
